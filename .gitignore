@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Audit databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Agent output
+output/*
+!output/.gitkeep
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
