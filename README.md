@@ -1,49 +1,132 @@
-# Audit-Logged AI Agent
+# 🛡️ AuditLogged AI Agent
 
-An AI agent where every single step is fully auditable. Each run emits a structured, redacted, cryptographically hash-chained event recording **TOOLS** used, **DATA** accessed, **DECISIONS** made, and the model's stated **RATIONALE**.
+<p align="center">
+  <strong>Tamper-evident, cryptographically chained, and verifiable audit logging for AI agent execution.</strong>
+</p>
 
-> **Core Principle**: If you can't trace it, you can't debug it, secure it, or trust it.
-
----
-
-## Key Features
-
-- **Tamper-Evident Hash Chain**: Every event is cryptographically linked to the previous event using SHA-256 (`canonical_json`). Any modification, deletion, reordering, or row insertion breaks the chain and is detected by `audit verify`.
-- **Append-Only Database**: SQLite storage guarded by database triggers preventing `UPDATE` and `DELETE`. All writes run inside `BEGIN IMMEDIATE` transactions.
-- **Strict Redaction Choke Point**: All data flows through `AuditLogger` before being hashed or persisted. Automatically detects and irreversibly masks API keys (Anthropic, OpenAI, AWS), bearer tokens, credit cards (Luhn-checked), email addresses, phone numbers, and sensitive dictionary keys (`password`, `api_key`, `secret`).
-- **Required Model Rationale**: Every tool definition auto-injects a mandatory `rationale` requirement. Tool invocations without explicit rationale are rejected and logged as errors.
-- **Sandboxed Tool Permissions**: `PermissionGuard` enforces tool allowlists and restricts file reads to `data/` and writes to `output/`. Path traversal attempts (`../`) are strictly blocked.
-- **Human-Readable Timeline**: Review runs in under a minute with `audit show <run_id>`.
-- **Read-Only API**: FastAPI query endpoints for auditing without any risk of database tampering.
-- **100% Offline Test Suite**: Complete unit and integration test suite with `FakeModelClient` test doubles.
+<p align="center">
+  <a href="#key-features"><img src="https://img.shields.io/badge/Python-3.12+-blue.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+"></a>
+  <a href="#tamper-evident-verification"><img src="https://img.shields.io/badge/Integrity-SHA--256%20Hash%20Chain-green.svg?style=flat-square" alt="Hash Chain"></a>
+  <a href="#running-tests"><img src="https://img.shields.io/badge/Tests-178%20Passed-brightgreen.svg?style=flat-square" alt="Tests"></a>
+  <a href="#read-only-api-server"><img src="https://img.shields.io/badge/API-FastAPI%20Read--Only-009688.svg?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI"></a>
+  <a href="#code-quality"><img src="https://img.shields.io/badge/Code%20Style-Ruff-black.svg?style=flat-square" alt="Ruff"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-purple.svg?style=flat-square" alt="License"></a>
+</p>
 
 ---
 
-## Installation & Setup
+## 📌 Problem & Motivation
 
-```bash
-# 1. Create and activate virtual environment (Python 3.12+)
-python -m venv .venv
-.venv\Scripts\activate            # Windows (source .venv/bin/activate on Linux/macOS)
+Autonomous AI agents execute tools, touch sensitive datasets, and make branching decisions. In conventional agent implementations, this execution history is ephemeral, unredacted, or scattered across unstructured log files.
 
-# 2. Install dependencies in editable mode
-pip install -e ".[dev]"
+> **Core Principle**: *If you can't trace it, you can't debug it, secure it, or trust it.*
 
-# 3. Configure environment
-copy .env.example .env            # cp .env.example .env on Linux/macOS
-# Edit .env and set ANTHROPIC_API_KEY
+**AuditLogged AI Agent** produces an immutable, tamper-evident audit record answering:
+* 🛠️ **Tools** — What tools did the agent execute, and with what arguments?
+* 📂 **Data** — What datasets and fields were accessed or modified?
+* 🧠 **Decisions** — What branching choices did the agent make, and **why** (mandatory stated model rationale)?
+* 🔒 **Integrity** — Has any event been inserted, modified, reordered, or deleted after the fact?
+
+---
+
+## 🏗️ Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph Execution["🤖 Agent Execution Layer"]
+        CLI["CLI (audit run / show / list / verify / serve)"]
+        Runner["AgentRunner (agent/loop.py)"]
+        Model["Claude 3.5 Sonnet / FakeModelClient"]
+        Guard["PermissionGuard (Path Sandbox & Allowlist)"]
+        Tools["Tool Registry (Sales Data, Aggregator, Exporter)"]
+    end
+
+    subgraph Security["🛡️ Audit & Cryptographic Engine"]
+        Context["ToolContext (data_access emitter)"]
+        Logger["AuditLogger (Single Choke Point)"]
+        Redactor["Redaction Engine (PII, API Keys, Tokens)"]
+        Hasher["HashChain (Canonical JSON + SHA-256)"]
+    end
+
+    subgraph Storage["💾 Storage & Query Layer"]
+        SQLite[("SQLite audit_events (Trigger-Protected Append-Only)")]
+        API["FastAPI Query Service (Read-Only)"]
+    end
+
+    CLI --> Runner
+    Runner <--> Model
+    Runner --> Guard
+    Guard -->|allowed| Tools
+    Guard -.->|denied| Logger
+    Tools --> Context --> Logger
+    Runner --> Logger
+    Logger --> Redactor --> Hasher --> SQLite
+    SQLite --> CLI
+    SQLite --> API
 ```
 
 ---
 
-## CLI Usage & Walkthrough
+## ✨ Key Features
+
+* **🔗 Tamper-Evident SHA-256 Hash Chain**: Every audit event contains `prev_hash` computed over canonical JSON (`RFC 8785` semantics). Any alteration breaks the cryptographic link and is immediately detected by `audit verify`.
+* **🛑 SQLite Database Trigger Protection**: Append-only storage backed by SQLite triggers `audit_no_update` and `audit_no_delete`. Modifying or deleting rows is blocked at the database engine level.
+* **✂️ Single Redaction Choke Point**: All data flows through `AuditLogger` before hashing or persistence. Irreversibly masks API keys (Anthropic, OpenAI, AWS), bearer tokens, credit card numbers (Luhn validated), emails, phone numbers, and sensitive JSON dictionary keys.
+* **💭 Mandatory Stated Rationale**: Every tool definition dynamically requires a `rationale` field. Tool calls without explicit model rationale are rejected and logged as errors.
+* **🚧 Sandboxed Tool Permissions**: `PermissionGuard` restricts tool access to an allowlist and strictly confines file reads to `data/` and writes to `output/` with path-traversal (`../`) protection.
+* **⏱️ Human-Readable Timeline**: Audit runs can be reviewed in seconds using `audit show <run_id>`.
+* **🌐 Read-Only FastAPI Service**: Inspect audit trails and verify integrity over HTTP without risk of database mutation (`POST`, `PUT`, `DELETE` return `405 Method Not Allowed`).
+* **🧪 100% Offline Test Suite**: 178 tests execute in seconds without live API dependencies.
+
+---
+
+## 🚀 Quickstart
+
+### 1. Prerequisites & Installation
+
+Requires **Python 3.12+**.
+
+```bash
+# Clone the repository
+git clone https://github.com/Parthivcodes/AuditLogged-AI-Agent-.git
+cd AuditLogged-AI-Agent-
+
+# Create and activate virtual environment
+python -m venv .venv
+
+# Windows:
+.venv\Scripts\activate
+# Linux / macOS:
+source .venv/bin/activate
+
+# Install package and dev dependencies
+pip install -e ".[dev]"
+```
+
+### 2. Configure Environment
+
+```bash
+# Copy example environment configuration
+cp .env.example .env     # On Windows: copy .env.example .env
+
+# Set your Anthropic API key in .env
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+---
+
+## 💻 CLI Usage Guide
+
+The `audit` CLI is automatically registered upon package installation:
 
 ### 1. Run the Agent
+
 ```bash
-audit run "Summarize Q1 sales data"
+audit run "Summarize Q1 sales data and calculate key metrics"
 ```
+
 ```text
-Starting audit run for prompt: 'Summarize Q1 sales data'
+Starting audit run for prompt: 'Summarize Q1 sales data and calculate key metrics'
 Database: audit.db | Model: claude-sonnet-4-5 | Max steps: 10
 
 === Agent Result ===
@@ -55,27 +138,35 @@ To view the tamper-evident audit timeline, run:
   audit show 7f3a1290-b384-48f1-a1e9-4411d9f82873
 ```
 
-### 2. View Recent Runs
+---
+
+### 2. List Recorded Runs
+
 ```bash
 audit list
 ```
+
 ```text
 RUN ID                                 STARTED AT                EVENTS   NON-OK   SEQ RANGE
 --------------------------------------------------------------------------------------------
 7f3a1290-b384-48f1-a1e9-4411d9f82873   2026-10-07T14:32:01.102Z  8        0        1..8
 ```
 
-### 3. Inspect the Audit Timeline
+---
+
+### 3. Inspect Full Audit Timeline
+
 ```bash
 audit show 7f3a1290-b384-48f1-a1e9-4411d9f82873
 ```
+
 ```text
 ====================================================================================================
 Run 7f3a1290-b384-48f1-a1e9-4411d9f82873
 8 events  |  2026-10-07T14:32:01.102Z -> 2026-10-07T14:32:06.450Z
 ====================================================================================================
 [00] 14:32:01.102  user_request    user
-       request:   Summarize Q1 sales data
+       request:   Summarize Q1 sales data and calculate key metrics
 [01] 14:32:02.310  decision        agent  call_tool:read_sales_data
        why:       Need raw Q1 transactions to calculate sales statistics.
        said:      I will load the Q1 sales dataset.
@@ -113,35 +204,38 @@ Chain:     seq 1-8, head e3b0c44298fc1c14...
 
 ---
 
-## Tamper-Evident Verification & Tamper Demo
+## 🔍 Tamper-Evident Verification
 
-The audit log is secured by a continuous SHA-256 hash chain where each event includes the cryptographic hash of the preceding event (`prev_hash`).
+The audit log is verified by recalculating SHA-256 hashes sequentially from genesis (`seq=1`, `prev_hash="GENESIS"`) to the chain head.
 
-### Normal Verification
+### Verify Audit Integrity
+
 ```bash
 audit verify
 ```
+
 ```text
 OK: Hash chain integrity verified successfully.
 Events checked: 8
 Head hash:       e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 ```
 
-### Tamper Demonstration
+### Tamper Simulation
 
-Even if an attacker bypasses application-level security and directly manipulates the SQLite database file:
+Even if a malicious actor bypasses the application and accesses the SQLite file directly:
 
 ```bash
-# 1. Attempting an UPDATE or DELETE inside SQLite is blocked by triggers:
+# 1. Triggers block direct updates:
 sqlite3 audit.db "UPDATE audit_events SET status = 'denied' WHERE seq = 2;"
-# Error: stepping, append-only (19)
+# Output: Error: stepping, append-only (19)
 
-# 2. If an attacker disables triggers and alters a row:
+# 2. If triggers are forcibly bypassed and row content is modified:
 sqlite3 audit.db "DROP TRIGGER audit_no_update; UPDATE audit_events SET payload = '{\"tampered\": true}' WHERE seq = 2;"
 
-# 3. Running 'audit verify' immediately flags the tampering:
+# 3. Verification immediately detects and isolates the tampering:
 audit verify
 ```
+
 ```text
 TAMPER DETECTED: Hash chain verification failed!
 Events checked before failure: 1
@@ -151,41 +245,86 @@ Reason:                        hash mismatch: event content was modified
 
 ---
 
-## Read-Only API Server
+## 🌐 Read-Only REST API
 
-Launch the read-only FastAPI query service:
+Start the FastAPI audit service:
 
 ```bash
 audit serve --port 8000
 ```
 
-Interactive documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+Swagger UI documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
-### Endpoints
-- `GET /health` — Service health status
-- `GET /runs` — List recent runs (`?limit=50`)
-- `GET /runs/{run_id}` — Summary of a single run
-- `GET /runs/{run_id}/events` — All audit events for a run (`?event_type=tool_call`)
-- `GET /verify` — Recompute and verify the global hash chain
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | `GET` | Health check & service status |
+| `/runs` | `GET` | Paginated list of audit runs (`?limit=50&offset=0`) |
+| `/runs/{run_id}` | `GET` | Comprehensive run summary with token & tool stats |
+| `/runs/{run_id}/events` | `GET` | Filterable list of events (`?event_type=tool_call`) |
+| `/verify` | `GET` | Full cryptographic hash chain verification result |
 
-*Note: All mutating HTTP methods (`POST`, `PUT`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.*
+*Security guarantee: All mutating HTTP methods (`POST`, `PUT`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.*
 
 ---
 
-## Running Tests
+## 📂 Project Structure
+
+```text
+audit-agent/
+├── pyproject.toml               # Build config, dependencies & tool settings
+├── .env.example                 # Environment variable templates
+├── data/
+│   └── sample/                  # Sandboxed sample datasets (sales_q1.csv)
+├── output/                      # Sandboxed directory for agent file writes
+├── docs/                        # Architecture & Schema specifications
+│   ├── ARCHITECTURE.md          # Technical design & lifecycle specs
+│   ├── AUDIT_SCHEMA.md          # Formal JSON schema for audit events
+│   ├── PROJECT_BRIEF.md         # Requirements & threat mitigation
+│   └── TASKS.md                 # Project milestones
+├── src/
+│   └── audit_agent/
+│       ├── agent/               # Agent loop, model client & prompts
+│       │   ├── loop.py          # Core execution loop & step controller
+│       │   ├── model_client.py  # Anthropic SDK client & test protocols
+│       │   └── prompts.py       # System instructions & rationale prompts
+│       ├── audit/               # Cryptographic audit engine
+│       │   ├── events.py        # Pydantic v2 audit event data models
+│       │   ├── hashchain.py     # Canonical JSON & SHA-256 hash chaining
+│       │   ├── logger.py        # Single write choke point & event emitter
+│       │   ├── redaction.py     # PII & secret pattern masking engine
+│       │   └── timeline.py      # Terminal formatting & ASCII renderers
+│       ├── storage/
+│       │   └── sqlite_store.py  # Trigger-guarded append-only SQLite store
+│       ├── tools/               # Sandboxed tool definitions & permissions
+│       │   ├── base.py          # BaseTool contract & ToolContext
+│       │   ├── permissions.py   # PermissionGuard & directory sandboxing
+│       │   ├── registry.py      # Dynamic tool registration with rationale
+│       │   ├── sales.py         # Sales data access tools
+│       │   └── summary.py       # Statistical summary tool
+│       ├── api/                 # Read-only FastAPI server & route handlers
+│       └── cli.py               # Main CLI command dispatcher
+└── tests/                       # 100% offline pytest test suite (178 tests)
+```
+
+---
+
+## 🧪 Testing
 
 Run the full offline test suite:
 
 ```bash
 pytest -q
-ruff check . && ruff format --check .
+```
+
+Verify code formatting and linting:
+
+```bash
+ruff check .
+ruff format --check .
 ```
 
 ---
 
-## Documentation
+## 📜 License
 
-- [Project Brief](docs/PROJECT_BRIEF.md): Mission, scope, and success criteria
-- [Architecture](docs/ARCHITECTURE.md): Component interactions, lifecycle, and design decisions
-- [Audit Schema](docs/AUDIT_SCHEMA.md): Formal JSON schema for audit events v1.0
-- [Tasks & Milestones](docs/TASKS.md): Implementation milestone breakdown
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
